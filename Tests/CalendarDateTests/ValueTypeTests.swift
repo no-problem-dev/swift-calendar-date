@@ -57,6 +57,7 @@ struct DateSpanTests {
     @Test("Nights and days")
     func nightsAndDays() {
         #expect(trip.nights == 3)
+        #expect(trip.nights == trip.first.days(to: trip.last))
         #expect(trip.days.count == 4)
         #expect(trip.days.map(\.description) == ["2026-09-23", "2026-09-24", "2026-09-25", "2026-09-26"])
     }
@@ -126,14 +127,36 @@ struct TimeWindowTests {
         #expect(TimeWindow(start: t1500, end: t1600)?.isInstant == false)
     }
 
-    @Test("Contains includes both ends")
-    func contains() {
+    @Test("A window with room holds its start but not its end")
+    func containsIsHalfOpen() {
         let window = TimeWindow(start: t1500, end: t1530)!
         #expect(window.contains(t1500))
-        #expect(window.contains(t1530))
+        #expect(window.contains(t1530.addingTimeInterval(-0.001)))
+        #expect(!window.contains(t1530))
         #expect(!window.contains(t1500.addingTimeInterval(-1)))
-        #expect(!window.contains(t1530.addingTimeInterval(1)))
+    }
+
+    @Test("A zero-length window holds its one instant")
+    func instantContainsItself() {
         #expect(TimeWindow.instant(t1500).contains(t1500))
+        #expect(!TimeWindow.instant(t1500).contains(t1500.addingTimeInterval(0.001)))
+        #expect(!TimeWindow.instant(t1500).contains(t1500.addingTimeInterval(-0.001)))
+    }
+
+    @Test("Where consecutive windows meet, the instant belongs to exactly one of them, the later")
+    func boundaryBelongsToOneWindow() {
+        let segments = [
+            TimeWindow(start: t1500, end: t1530)!,
+            TimeWindow(start: t1530, end: t1600)!,
+            TimeWindow(start: t1600, end: t1600.addingTimeInterval(1800))!,
+        ]
+        for boundary in [t1530, t1600] {
+            #expect(segments.filter { $0.contains(boundary) } == [segments.first { $0.start == boundary }!])
+        }
+        for (earlier, later) in zip(segments, segments.dropFirst()) {
+            #expect(!earlier.overlaps(later))
+            #expect(earlier.intersection(later) == nil)
+        }
     }
 
     @Test("Back-to-back windows do not overlap; nested and crossing ones do")
@@ -141,23 +164,48 @@ struct TimeWindowTests {
         let first = TimeWindow(start: t1500, end: t1530)!
         let second = TimeWindow(start: t1530, end: t1600)!
         let whole = TimeWindow(start: t1500, end: t1600)!
+        let crossing = TimeWindow(start: t1500.addingTimeInterval(900), end: t1530.addingTimeInterval(900))!
         #expect(!first.overlaps(second))
         #expect(!second.overlaps(first))
         #expect(first.overlaps(whole))
         #expect(whole.overlaps(second))
-        #expect(whole.overlaps(.instant(t1530)))
-        #expect(!first.overlaps(.instant(t1530)))
-        #expect(!TimeWindow.instant(t1530).overlaps(.instant(t1530)))
+        #expect(first.overlaps(crossing) && crossing.overlaps(second))
     }
 
-    @Test("Intersection keeps the shared instants, including a single touching one")
+    @Test("Two fixed times at the same instant overlap; at different instants they do not")
+    func fixedTimesOverlapAtTheSameInstant() {
+        #expect(TimeWindow.instant(t1530).overlaps(.instant(t1530)))
+        #expect(TimeWindow.instant(t1530).intersection(.instant(t1530)) == .instant(t1530))
+        #expect(!TimeWindow.instant(t1530).overlaps(.instant(t1530.addingTimeInterval(1))))
+    }
+
+    @Test("A fixed time overlaps a window exactly when the window contains it")
+    func fixedTimeOverlapsWhatContainsIt() {
+        let window = TimeWindow(start: t1500, end: t1600)!
+        for fixed in [t1500, t1530, t1600, t1500.addingTimeInterval(-1)] {
+            #expect(window.overlaps(.instant(fixed)) == window.contains(fixed), "\(fixed)")
+            #expect(TimeWindow.instant(fixed).overlaps(window) == window.contains(fixed), "\(fixed)")
+        }
+        #expect(window.overlaps(.instant(t1500)))
+        #expect(!window.overlaps(.instant(t1600)))
+    }
+
+    @Test("Intersection keeps the shared instants and agrees with overlaps")
     func intersection() {
         let first = TimeWindow(start: t1500, end: t1530)!
         let second = TimeWindow(start: t1530, end: t1600)!
         let whole = TimeWindow(start: t1500, end: t1600)!
-        #expect(first.intersection(second) == .instant(t1530))
+        #expect(first.intersection(second) == nil)
         #expect(whole.intersection(first) == first)
-        #expect(TimeWindow.instant(t1500).intersection(second) == nil)
+        #expect(whole.intersection(.instant(t1530)) == .instant(t1530))
+        #expect(TimeWindow.instant(t1530).intersection(first) == nil)
+        let windows = [first, second, whole, .instant(t1500), .instant(t1530), .instant(t1600)]
+        for a in windows {
+            for b in windows {
+                #expect(a.overlaps(b) == (a.intersection(b) != nil))
+                #expect(a.overlaps(b) == b.overlaps(a))
+            }
+        }
     }
 
     @Test("Codable uses start and end, and refuses a reversed pair")

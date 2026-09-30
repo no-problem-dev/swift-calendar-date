@@ -122,6 +122,84 @@ struct LocalDateArithmeticTests {
     }
 }
 
+@Suite("LocalDate: months and weeks")
+struct LocalDateMonthAndWeekTests {
+    @Test("Days in the month", arguments: [
+        ("2024-02-10", 29), ("2026-02-10", 28), ("1900-02-01", 28), ("2000-02-29", 29),
+        ("2026-04-30", 30), ("2026-12-31", 31), ("2026-01-01", 31),
+    ])
+    func daysInMonth(_ case: (String, Int)) {
+        #expect(date(`case`.0).daysInMonth == `case`.1)
+    }
+
+    @Test("The month span runs from the 1st through the last day")
+    func monthSpan() {
+        let february = date("2024-02-10").monthSpan
+        #expect(february.first == date("2024-02-01"))
+        #expect(february.last == date("2024-02-29"))
+        #expect(february.days.count == 29)
+        #expect(date("9999-12-31").monthSpan.last == date("9999-12-31"))
+        #expect(date("0001-01-15").monthSpan.first == date("0001-01-01"))
+    }
+
+    @Test("The start of the week follows the weekday passed in")
+    func startOfWeek() {
+        // 2026-09-25 is a Friday.
+        #expect(date("2026-09-25").startOfWeek(firstWeekday: .monday) == date("2026-09-21"))
+        #expect(date("2026-09-25").startOfWeek(firstWeekday: .sunday) == date("2026-09-20"))
+        #expect(date("2026-09-25").startOfWeek(firstWeekday: .friday) == date("2026-09-25"))
+        #expect(date("2026-09-25").startOfWeek(firstWeekday: .saturday) == date("2026-09-19"))
+        #expect(date("2026-09-21").startOfWeek(firstWeekday: .monday) == date("2026-09-21"))
+    }
+
+    @Test("The start of the week agrees with Foundation's week for every first weekday", arguments: Weekday.allCases)
+    func startOfWeekAgreesWithFoundation(_ firstWeekday: Weekday) throws {
+        var calendar = Calendar.gregorian(timeZone: Zone.utc)
+        calendar.firstWeekday = firstWeekday.rawValue
+        for day in date("2025-12-01")...date("2026-03-31") {
+            let week = try #require(calendar.dateInterval(of: .weekOfYear, for: day.start(in: Zone.utc)))
+            #expect(day.startOfWeek(firstWeekday: firstWeekday).start(in: Zone.utc) == week.start, "\(day)")
+        }
+    }
+}
+
+@Suite("LocalDate and Foundation before 1582")
+struct JulianCalendarTests {
+    @Test("Foundation's Gregorian calendar counts dates before 1582-10-15 in the Julian calendar")
+    func foundationSwitchesToJulian() {
+        let calendar = Calendar.gregorian(timeZone: Zone.utc)
+        let old = calendar.dateComponents([.year, .month, .day], from: date("1500-01-01").start(in: Zone.utc))
+        #expect(old.year == 1499 && old.month == 12 && old.day == 23)
+        let reform = calendar.dateComponents([.year, .month, .day], from: date("1582-10-15").start(in: Zone.utc))
+        #expect(reform.year == 1582 && reform.month == 10 && reform.day == 15)
+    }
+}
+
+@Suite("Weekday: Codable")
+struct WeekdayCodableTests {
+    @Test("Encodes as the lowercase English name")
+    func encodesName() throws {
+        let data = try JSONEncoder().encode([Weekday.sunday, .monday, .saturday])
+        #expect(String(decoding: data, as: UTF8.self) == #"["sunday","monday","saturday"]"#)
+        let back = try JSONDecoder().decode([Weekday].self, from: JSONEncoder().encode(Weekday.allCases))
+        #expect(back == Weekday.allCases)
+    }
+
+    @Test("Refuses numbers and other spellings", arguments: [#"[2]"#, #"["Monday"]"#, #"["mon"]"#, #"[""]"#])
+    func refusesOthers(_ json: String) {
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode([Weekday].self, from: Data(json.utf8))
+        }
+    }
+
+    @Test("The raw value still matches Foundation's weekday number")
+    func rawValueIsFoundationNumber() {
+        #expect(Weekday.sunday.rawValue == 1)
+        #expect(Weekday.saturday.rawValue == 7)
+        #expect(Weekday(name: "friday") == .friday)
+    }
+}
+
 @Suite("LocalDate: Codable")
 struct LocalDateCodableTests {
     @Test("Encodes as a bare YYYY-MM-DD string")

@@ -89,7 +89,7 @@ struct NewYorkDaylightSavingTests {
     func dayIsNotTwentyFourHours() {
         let saturdayNight = instant("2026-03-08T04:30:00Z")   // 23:30 on Saturday 03-07
         let day = LocalDate(saturdayNight, in: Zone.newYork)
-        #expect(day.adding(days: 1) == date("2026-03-08"))
+        #expect(day?.adding(days: 1) == date("2026-03-08"))
         #expect(LocalDate(saturdayNight.addingTimeInterval(24 * 3600), in: Zone.newYork) == date("2026-03-09"))
     }
 }
@@ -122,13 +122,17 @@ struct SkippedMidnightTests {
 
 @Suite("Agreement with Foundation's calendar")
 struct FoundationAgreementTests {
-    /// Instants spread over 1971 through 2037, from a fixed seed so every run checks the same ones.
+    /// Instants spread over 1900 through 2037 with fractions of a second, from a fixed seed so every run
+    /// checks the same ones. Instants before 1970 have negative seconds, where rounding toward zero
+    /// instead of down would read the wrong day.
     private static let samples: [Date] = {
         var state: UInt64 = 0x9E37_79B9_7F4A_7C15
+        let first = -2_208_988_800   // 1900-01-01T00:00:00Z
+        let span = 4_354_905_600     // through 2037-12-31
         return (0..<4000).map { _ in
             state = state &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
-            let seconds = 31_536_000 + Int(state >> 33) % 2_100_000_000
-            return Date(timeIntervalSince1970: Double(seconds))
+            let seconds = first + Int(state >> 20) % span
+            return Date(timeIntervalSince1970: Double(seconds) + Double(state % 1000) / 1000)
         }
     }()
 
@@ -137,8 +141,10 @@ struct FoundationAgreementTests {
         let calendar = Calendar.gregorian(timeZone: timeZone)
         for sample in Self.samples {
             let parts = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: sample)
-            let day = LocalDate(sample, in: timeZone)
-            let clock = LocalTime(sample, in: timeZone)
+            guard let day = LocalDate(sample, in: timeZone), let clock = LocalTime(sample, in: timeZone) else {
+                Issue.record("\(sample) did not convert in \(timeZone.identifier)")
+                continue
+            }
             #expect(parts.year == day.year && parts.month == day.month && parts.day == day.day, "\(sample)")
             #expect(parts.hour == clock.hour && parts.minute == clock.minute, "\(sample)")
         }
@@ -149,15 +155,17 @@ struct FoundationAgreementTests {
         let calendar = Calendar.gregorian(timeZone: timeZone)
         for sample in Self.samples {
             let day = LocalDate(sample, in: timeZone)
-            #expect(day.start(in: timeZone) == calendar.startOfDay(for: sample), "\(day) in \(timeZone.identifier)")
+            #expect(day?.start(in: timeZone) == calendar.startOfDay(for: sample), "\(sample) in \(timeZone.identifier)")
         }
     }
 
     @Test("A wall-clock time converts to an instant that reads back the same", arguments: Zone.all)
     func wallClockRoundTrips(_ timeZone: TimeZone) {
         for sample in Self.samples {
-            let day = LocalDate(sample, in: timeZone)
-            let clock = LocalTime(sample, in: timeZone)
+            guard let day = LocalDate(sample, in: timeZone), let clock = LocalTime(sample, in: timeZone) else {
+                Issue.record("\(sample) did not convert in \(timeZone.identifier)")
+                continue
+            }
             guard let back = day.instant(at: clock, in: timeZone) else {
                 Issue.record("\(day) \(clock) exists in \(timeZone.identifier) but converted to nil")
                 continue
@@ -166,5 +174,153 @@ struct FoundationAgreementTests {
             #expect(LocalTime(back, in: timeZone) == clock)
             #expect(back <= sample, "the earlier instant is chosen, so it is never after the sample")
         }
+    }
+}
+
+@Suite("Every clock change from 1970 through 2037")
+struct TransitionTests {
+    private static let from = Date(timeIntervalSince1970: 0)
+    private static let through = Date(timeIntervalSince1970: 2_145_916_800)   // 2038-01-01T00:00:00Z
+
+    private static func transitions(in timeZone: TimeZone) -> [Date] {
+        var found: [Date] = []
+        var cursor = from
+        while let next = timeZone.nextDaylightSavingTimeTransition(after: cursor), next < through {
+            found.append(next)
+            cursor = next
+        }
+        return found
+    }
+
+    @Test("The walk finds the transitions", arguments: Zone.changing)
+    func findsTransitions(_ timeZone: TimeZone) {
+        #expect(Self.transitions(in: timeZone).count >= 10, "\(timeZone.identifier)")
+    }
+
+    @Test("Around each transition, the start of the day matches Calendar.startOfDay", arguments: Zone.changing)
+    func startOfDayAroundTransitions(_ timeZone: TimeZone) {
+        let calendar = Calendar.gregorian(timeZone: timeZone)
+        for transition in Self.transitions(in: timeZone) {
+            for offset in [-86_400.0, -1, 0, 1, 86_400] {
+                let instant = transition.addingTimeInterval(offset)
+                #expect(
+                    LocalDate(instant, in: timeZone)?.start(in: timeZone) == calendar.startOfDay(for: instant),
+                    "\(instant) in \(timeZone.identifier)"
+                )
+            }
+        }
+    }
+
+    /// Every quarter hour on the day of each transition converts to the earliest instant whose wall clock
+    /// reads that time, found here from the offsets on both sides of the transition; nil when neither fits.
+    @Test("Around each transition, wall-clock times convert to the earliest matching instant", arguments: Zone.changing)
+    func wallClockAroundTransitions(_ timeZone: TimeZone) {
+        for transition in Self.transitions(in: timeZone) {
+            let offsets = [
+                timeZone.secondsFromGMT(for: transition.addingTimeInterval(-1)),
+                timeZone.secondsFromGMT(for: transition),
+            ]
+            guard let day = LocalDate(transition, in: timeZone) else {
+                Issue.record("\(transition) did not convert in \(timeZone.identifier)")
+                continue
+            }
+            let midnight = Double(day.dayNumber * 86_400)
+            for quarter in 0..<96 {
+                let time = LocalTime(hour: quarter / 4, minute: quarter % 4 * 15)!
+                let wall = midnight + Double(time.minuteOfDay * 60)
+                let expected = offsets
+                    .map { Date(timeIntervalSince1970: wall - Double($0)) }
+                    .filter { LocalDate($0, in: timeZone) == day && LocalTime($0, in: timeZone) == time }
+                    .min()
+                #expect(day.instant(at: time, in: timeZone) == expected, "\(day) \(time) in \(timeZone.identifier)")
+            }
+        }
+    }
+}
+
+@Suite("Instants before 1970 and fractions of a second")
+struct NegativeAndFractionalSecondsTests {
+    @Test("One second before 1970 is still 1969-12-31 at 23:59")
+    func oneSecondBeforeEpoch() {
+        #expect(LocalDate(Date(timeIntervalSince1970: -1), in: Zone.utc) == date("1969-12-31"))
+        #expect(LocalTime(Date(timeIntervalSince1970: -1), in: Zone.utc) == time("23:59"))
+        #expect(LocalDate(Date(timeIntervalSince1970: -0.5), in: Zone.utc) == date("1969-12-31"))
+        #expect(LocalDate(Date(timeIntervalSince1970: -86_400), in: Zone.utc) == date("1969-12-31"))
+        #expect(LocalDate(Date(timeIntervalSince1970: -86_400.5), in: Zone.utc) == date("1969-12-30"))
+    }
+
+    @Test("A fraction of a second before midnight is still the same day")
+    func fractionBeforeMidnight() {
+        #expect(LocalDate(Date(timeIntervalSince1970: 86_399.999), in: Zone.utc) == date("1970-01-01"))
+        #expect(LocalTime(Date(timeIntervalSince1970: 86_399.999), in: Zone.utc) == time("23:59"))
+        #expect(LocalDate(instant("2026-09-24T14:59:59Z").addingTimeInterval(0.9), in: Zone.tokyo) == date("2026-09-24"))
+    }
+}
+
+@Suite("Instants that are not a date")
+struct OutOfRangeInstantTests {
+    @Test("Instants outside years 1 through 9999, NaN and infinity convert to nil", arguments: [
+        Date.distantPast,
+        Date(timeIntervalSince1970: 1e12),
+        Date(timeIntervalSince1970: -1e12),
+        Date(timeIntervalSinceReferenceDate: .nan),
+        Date(timeIntervalSinceReferenceDate: .infinity),
+        Date(timeIntervalSinceReferenceDate: -.infinity),
+        Date(timeIntervalSince1970: 1e300),
+    ])
+    func nilOutsideRange(_ instant: Date) {
+        for timeZone in Zone.all {
+            #expect(LocalDate(instant, in: timeZone) == nil)
+            #expect(LocalTime(instant, in: timeZone) == nil)
+        }
+    }
+
+    @Test("The first and last instants of the supported years still convert")
+    func edgesConvert() {
+        let first = date("0001-01-01").start(in: Zone.utc)
+        #expect(LocalDate(first, in: Zone.utc) == date("0001-01-01"))
+        #expect(LocalTime(first, in: Zone.utc) == time("00:00"))
+        #expect(LocalDate(first.addingTimeInterval(-0.001), in: Zone.utc) == nil)
+
+        let last = date("9999-12-31").instant(at: time("23:59"), in: Zone.utc)!.addingTimeInterval(59.999)
+        #expect(LocalDate(last, in: Zone.utc) == date("9999-12-31"))
+        #expect(LocalTime(last, in: Zone.utc) == time("23:59"))
+        #expect(LocalDate(last.addingTimeInterval(0.001), in: Zone.utc) == nil)
+        #expect(LocalDate(Date.distantFuture, in: Zone.utc) == date("4001-01-01"))
+    }
+
+    @Test("Where the local date is in range the conversion works, even if UTC's is not")
+    func localOffsetDecides() {
+        let lastUTC = date("9999-12-31").instant(at: time("23:59"), in: Zone.utc)!.addingTimeInterval(60)
+        #expect(LocalDate(lastUTC, in: Zone.utc) == nil)
+        #expect(LocalDate(lastUTC, in: Zone.newYork) == date("9999-12-31"))
+        #expect(LocalDate(lastUTC, in: Zone.tokyo) == nil)
+    }
+
+    @Test("Stepping past year 9999 traps")
+    func addingPastLastYearTraps() async {
+        await #expect(processExitsWith: .failure) {
+            _ = LocalDate("9999-12-31")!.adding(days: 1)
+        }
+    }
+
+    @Test("A clock that reports a year outside 1 through 9999 traps in today(now:in:)")
+    func todayTrapsOnImpossibleClock() async {
+        await #expect(processExitsWith: .failure) {
+            _ = LocalDate.today(now: .distantPast, in: TimeZone(identifier: "UTC")!)
+        }
+    }
+}
+
+@Suite("A day a time zone skips entirely")
+struct SkippedDayTests {
+    // Pacific/Apia went from 2011-12-29 straight to 2011-12-31.
+    @Test("The skipped day starts where the next day starts, and that instant reads as the next day")
+    func skippedDayStart() {
+        let skipped = date("2011-12-30")
+        #expect(skipped.start(in: Zone.apia) == skipped.adding(days: 1).start(in: Zone.apia))
+        #expect(LocalDate(skipped.start(in: Zone.apia), in: Zone.apia) == date("2011-12-31"))
+        #expect(skipped.instant(at: time("12:00"), in: Zone.apia) == nil)
+        #expect(date("2011-12-29").instant(at: time("23:59"), in: Zone.apia) != nil)
     }
 }

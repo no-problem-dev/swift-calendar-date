@@ -47,7 +47,7 @@ struct UsageTests {
             instant("2026-09-26T15:01:00Z"),   // 00:01 on 09-27
             instant("2026-09-27T01:00:00Z"),   // 10:00 on 09-27
         ]
-        let counts = Dictionary(grouping: opens) { LocalDate($0, in: tokyo) }.mapValues(\.count)
+        let counts = Dictionary(grouping: opens.compactMap { LocalDate($0, in: tokyo) }) { $0 }.mapValues(\.count)
         #expect(counts == [date("2026-09-26"): 1, date("2026-09-27"): 2])
 
         let decoded = try JSONDecoder().decode([LocalDate: Int].self, from: JSONEncoder().encode(counts))

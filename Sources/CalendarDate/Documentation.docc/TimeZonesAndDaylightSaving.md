@@ -17,8 +17,17 @@ So the package has no default. Each conversion names its time zone:
 | ``LocalDate`` | `Date` | ``LocalDate/start(in:)`` |
 | ``LocalDate`` + ``LocalTime`` | `Date` | ``LocalDate/instant(at:in:)`` |
 
-Arithmetic on dates — ``LocalDate/adding(days:)``, ``LocalDate/days(to:)``, ``LocalDate/weekday`` —
-needs no time zone at all, and is computed without a `Calendar`.
+Arithmetic on dates — ``LocalDate/adding(days:)``, ``LocalDate/days(to:)``, ``LocalDate/weekday``,
+``LocalDate/daysInMonth``, ``LocalDate/monthSpan``, ``LocalDate/startOfWeek(firstWeekday:)`` — needs
+no time zone at all, and is computed without a `Calendar`.
+
+## Instants that are not a date
+
+``LocalDate/init(_:in:)`` and ``LocalTime/init(_:in:)`` return `nil` for an instant that is NaN or
+infinite, or whose local date falls outside years 1 through 9999. `Date.distantPast` is one: it is
+year 0 in the proleptic Gregorian calendar. Instants that come from a server, a cache or a model can be
+any of these, so reading them never traps. ``LocalDate/today(now:in:)`` takes the current time from a
+real clock, so it returns a plain ``LocalDate`` and traps only if the clock is impossible.
 
 ## Days are not 24 hours
 
@@ -45,8 +54,19 @@ A few time zones change their clocks at midnight. America/Santiago goes from 00:
 on 2026-09-06, so that date has no midnight. ``LocalDate/start(in:)`` returns the first instant the
 date exists, 01:00 local time, which matches Foundation's `Calendar.startOfDay(for:)`.
 
+## Days that are skipped entirely
+
+A time zone that moves across the date line can skip a whole date. Pacific/Apia went from 2011-12-29
+straight to 2011-12-31. For such a date, ``LocalDate/start(in:)`` returns the same instant as the next
+day's start, and that instant reads back as the next date. ``LocalDate/instant(at:in:)`` is `nil` for
+every time on it. This matches Foundation's `Calendar`.
+
 ## When a Calendar is still needed
 
 For date math these types do not cover, ``Foundation/Calendar/gregorian(timeZone:)`` makes a
 Gregorian calendar pinned to a time zone. Set its `locale` yourself if the app needs one; the package
 does not choose one for you.
+
+Foundation's Gregorian calendar counts dates before 1582-10-15 in the Julian calendar, while
+``LocalDate`` is proleptic Gregorian throughout. For those older dates the two give different answers:
+the instant ``LocalDate`` calls 1500-01-01 is 1499-12-23 to Foundation.

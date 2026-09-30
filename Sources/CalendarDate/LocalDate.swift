@@ -8,6 +8,11 @@ import Foundation
 ///
 /// The calendar is the proleptic Gregorian calendar, and years run from 1 through 9999 so that the text
 /// form is always the fixed-width `YYYY-MM-DD`. That form is also the `Codable` and dictionary-key form.
+/// A date that is not known yet is `LocalDate?` and `nil`, never an empty string.
+///
+/// Values that come from outside — text, JSON, an instant from a server or a cache — convert through
+/// failable initializers and give `nil` when they are not a date. Only arithmetic the caller controls,
+/// such as ``adding(days:)`` past year 9999, traps.
 ///
 /// ```swift
 /// let tokyo = TimeZone(identifier: "Asia/Tokyo")!
@@ -61,31 +66,43 @@ public struct LocalDate: Sendable, Hashable {
         self.init(year: year, month: month, day: day)
     }
 
-    /// The date a wall calendar in the given time zone shows at the given instant.
+    /// The date a wall calendar in the given time zone shows at the given instant, or nil when there is none.
+    ///
+    /// The result is nil when the instant is not a finite number (NaN or infinity) or when its date falls
+    /// outside years 1 through 9999, as `Date.distantPast` does. Use this for instants that come from
+    /// outside; use ``today(now:in:)`` for the current time.
     ///
     /// - Parameters:
     ///   - instant: The moment to read.
     ///   - timeZone: Whose calendar to read it on. The same instant is a different date in Tokyo and New York.
-    public init(_ instant: Date, in timeZone: TimeZone) {
-        self.init(dayNumber: Civil.wallClock(of: instant, in: timeZone).dayNumber)
+    public init?(_ instant: Date, in timeZone: TimeZone) {
+        guard let wall = Civil.wallClock(of: instant, in: timeZone) else { return nil }
+        self.init(dayNumber: wall.dayNumber)
     }
 
     /// Today in the given time zone, where the caller supplies what "now" is.
     ///
-    /// Taking `now` as an argument keeps the answer testable and keeps the clock at the caller's
-    /// composition root.
+    /// Unlike ``init(_:in:)`` this never returns nil: `now` comes from a real clock, and a clock that
+    /// reports a year outside 1 through 9999 is a programmer error, which traps. Taking `now` as an
+    /// argument keeps the answer testable and keeps the clock at the caller's composition root.
     ///
     /// - Parameters:
     ///   - now: The current instant, as the caller's clock reports it.
     ///   - timeZone: The time zone whose calendar decides where today begins.
     public static func today(now: Date, in timeZone: TimeZone) -> LocalDate {
-        LocalDate(now, in: timeZone)
+        guard let today = LocalDate(now, in: timeZone) else {
+            preconditionFailure("The clock reported \(now.timeIntervalSince1970) seconds since 1970, outside years 1 through 9999")
+        }
+        return today
     }
 
     /// The first instant of this day in the given time zone, which is midnight unless a clock change skips it.
     ///
     /// Where a daylight-saving change skips midnight (America/Santiago on 2026-09-06), the day begins at
     /// the transition, 01:00 local time.
+    ///
+    /// Where a time zone skips the whole date (Pacific/Apia jumped from 2011-12-29 to 2011-12-31), the
+    /// result is the same instant as the next day's start, and that instant reads back as the next day.
     ///
     /// - Parameter timeZone: The time zone whose midnight to find.
     public func start(in timeZone: TimeZone) -> Date {
@@ -108,7 +125,8 @@ public struct LocalDate: Sendable, Hashable {
     /// The date the given number of days later, or earlier when the number is negative.
     ///
     /// Stepping by days never touches a time zone, so it is unaffected by daylight-saving changes.
-    /// Stepping outside years 1 through 9999 is a programmer error and traps.
+    /// Stepping outside years 1 through 9999 is a programmer error and traps: the caller controls both
+    /// the date and the step.
     ///
     /// - Parameter days: How many days to move.
     public func adding(days: Int) -> LocalDate {
@@ -126,6 +144,33 @@ public struct LocalDate: Sendable, Hashable {
     public var weekday: Weekday {
         let sinceThursday = ((dayNumber % 7) + 7) % 7
         return Weekday(rawValue: (sinceThursday + 4) % 7 + 1)!
+    }
+
+    /// How many days this date's month has: 28 through 31.
+    public var daysInMonth: Int {
+        Civil.daysInMonth(year: year, month: month)
+    }
+
+    /// Every day of this date's month, from the 1st through the last day.
+    ///
+    /// ```swift
+    /// let february = LocalDate("2024-02-10")!.monthSpan
+    /// february.first        // 2024-02-01
+    /// february.last         // 2024-02-29
+    /// february.first.weekday // .thursday, where a month grid starts
+    /// ```
+    public var monthSpan: DateSpan {
+        DateSpan(LocalDate(year: year, month: month, day: 1)!...LocalDate(year: year, month: month, day: daysInMonth)!)
+    }
+
+    /// The first day of the week that contains this date, for weeks that begin on the given weekday.
+    ///
+    /// Pass the week start the app shows, such as `.monday`; the answer never depends on the device's
+    /// locale. A week that would begin before 0001-01-01 traps, like ``adding(days:)``.
+    ///
+    /// - Parameter firstWeekday: The weekday each week begins on.
+    public func startOfWeek(firstWeekday: Weekday) -> LocalDate {
+        adding(days: -((weekday.rawValue - firstWeekday.rawValue + 7) % 7))
     }
 
     /// Days since 1970-01-01, which is day 0.

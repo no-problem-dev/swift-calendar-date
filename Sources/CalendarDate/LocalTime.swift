@@ -36,11 +36,14 @@ public struct LocalTime: Sendable, Hashable {
 
     /// The time a wall clock in the given time zone shows at the given instant, dropping the seconds.
     ///
+    /// Nil exactly when ``LocalDate/init(_:in:)`` is nil for the same arguments: the instant is NaN or
+    /// infinite, or its date falls outside years 1 through 9999.
+    ///
     /// - Parameters:
     ///   - instant: The moment to read.
     ///   - timeZone: Whose wall clock to read it on.
-    public init(_ instant: Date, in timeZone: TimeZone) {
-        let secondOfDay = Civil.wallClock(of: instant, in: timeZone).secondOfDay
+    public init?(_ instant: Date, in timeZone: TimeZone) {
+        guard let secondOfDay = Civil.wallClock(of: instant, in: timeZone)?.secondOfDay else { return nil }
         self.hour = secondOfDay / 3600
         self.minute = secondOfDay % 3600 / 60
     }

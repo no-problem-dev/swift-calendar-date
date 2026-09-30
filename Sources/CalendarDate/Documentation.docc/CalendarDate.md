@@ -25,8 +25,10 @@ func accepts(_ printed: LocalDate, now: Date) -> Bool {
     (-365...1).contains(LocalDate.today(now: now, in: tokyo).days(to: printed))
 }
 
-// Visits per day, keyed by date; encodes as {"2026-09-25": 3, ...}.
-let visitsPerDay = Dictionary(grouping: visits) { LocalDate($0.at, in: tokyo) }.mapValues(\.count)
+// App opens per day, keyed by date; encodes as {"2026-09-25": 3, ...}.
+let opens: [Date] = loadOpenTimes()
+let opensPerDay = Dictionary(grouping: opens.compactMap { LocalDate($0, in: tokyo) }) { $0 }
+    .mapValues(\.count)
 ```
 
 ## Topics

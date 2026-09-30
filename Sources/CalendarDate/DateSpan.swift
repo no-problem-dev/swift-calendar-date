@@ -36,6 +36,8 @@ public struct DateSpan: Sendable, Hashable {
     }
 
     /// Nights between the first and last day: 0 for a day trip, 3 for Wednesday through Saturday.
+    ///
+    /// The same value as `first.days(to: last)`, one less than `days.count`.
     public var nights: Int {
         first.days(to: last)
     }

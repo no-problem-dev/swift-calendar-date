@@ -13,8 +13,11 @@ struct SourcePolicyTests {
 
     /// What the device decides: the clock, and the current time zone, calendar and locale.
     private static let forbidden: [(name: String, pattern: String)] = [
-        ("Date()", #"\bDate\s*\(\s*\)"#),
+        ("Date()", #"\bDate\s*(\.init)?\s*\(\s*\)"#),
         ("Date.now", #"\.now\b"#),
+        ("timeIntervalSinceNow", #"\btimeIntervalSinceNow\b"#),
+        ("NSTimeZone", #"\bNSTimeZone\b"#),
+        ("ProcessInfo", #"\bProcessInfo\b"#),
         ("TimeZone.current", #"\bTimeZone\s*\.\s*(current|autoupdatingCurrent|local)\b"#),
         ("Calendar.current", #"\bCalendar\s*\.\s*(current|autoupdatingCurrent)\b"#),
         ("Locale.current", #"\bLocale\s*\.\s*(current|autoupdatingCurrent)\b"#),
@@ -50,6 +53,8 @@ struct SourcePolicyTests {
     @Test("The patterns catch what they are meant to catch", arguments: [
         "let now = Date()", "Date.now", "TimeZone.current", "TimeZone.autoupdatingCurrent",
         "Calendar.current", "Locale.current", "calendar: Calendar = .current", "Locale.autoupdatingCurrent",
+        "Date.init()", "Date(timeIntervalSinceNow: 0)", "NSTimeZone.local", "NSTimeZone.system",
+        #"ProcessInfo.processInfo.environment["TZ"]"#,
     ])
     func patternsBite(_ sample: String) throws {
         let caught = try Self.forbidden.contains { _, pattern in

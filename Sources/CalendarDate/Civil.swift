@@ -47,12 +47,24 @@ enum Civil {
         return (yearOfEra + era * 400 + (month <= 2 ? 1 : 0), month, day)
     }
 
+    /// Day numbers of 0001-01-01 and 9999-12-31, the first and last days a `LocalDate` can hold.
+    static let dayNumbers: ClosedRange<Int> =
+        dayNumber(year: years.lowerBound, month: 1, day: 1)...dayNumber(year: years.upperBound, month: 12, day: 31)
+
     /// Splits an instant into its local day number and the seconds elapsed since that day's midnight.
-    static func wallClock(of instant: Date, in timeZone: TimeZone) -> (dayNumber: Int, secondOfDay: Int) {
-        let offset = timeZone.secondsFromGMT(for: instant)
-        let local = Int((instant.timeIntervalSince1970 + Double(offset)).rounded(.down))
-        let dayNumber = local >= 0 ? local / secondsPerDay : (local + 1) / secondsPerDay - 1
-        return (dayNumber, local - dayNumber * secondsPerDay)
+    ///
+    /// Nil when the instant is not a finite number or its local date falls outside years 1 through 9999,
+    /// so a value from outside (a corrupt cache, milliseconds read as seconds) never traps.
+    static func wallClock(of instant: Date, in timeZone: TimeZone) -> (dayNumber: Int, secondOfDay: Int)? {
+        let local = (instant.timeIntervalSince1970 + Double(timeZone.secondsFromGMT(for: instant))).rounded(.down)
+        let first = Double(dayNumbers.lowerBound * secondsPerDay)
+        let pastLast = Double((dayNumbers.upperBound + 1) * secondsPerDay)
+        // NaN fails both comparisons and infinity fails one, so this one check also turns those away
+        // before `Int(_:)` could trap on them.
+        guard local >= first, local < pastLast else { return nil }
+        let whole = Int(local)
+        let dayNumber = whole >= 0 ? whole / secondsPerDay : (whole + 1) / secondsPerDay - 1
+        return (dayNumber, whole - dayNumber * secondsPerDay)
     }
 }
 
