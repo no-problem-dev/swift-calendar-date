@@ -46,8 +46,8 @@ nor decodes.
 
 ## Documentation
 
-The API reference and an article on how time zones and daylight saving are handled live on
-[GitHub Pages](https://no-problem-dev.github.io/swift-calendar-date/documentation/calendardate/).
+The API reference and an article on how time zones and daylight saving are handled live in
+the DocC catalog [`Sources/CalendarDate/Documentation.docc`](Sources/CalendarDate/Documentation.docc).
 
 ## Installation
 

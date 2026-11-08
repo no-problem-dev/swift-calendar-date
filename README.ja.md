@@ -46,7 +46,7 @@ let day: LocalDate? = LocalDate(fromServer, in: tokyo)            // 日付で�
 ## ドキュメント
 
 API リファレンスと、時間帯・夏時間の扱いの解説は
-[GitHub Pages](https://no-problem-dev.github.io/swift-calendar-date/documentation/calendardate/) にある。
+DocC カタログ [`Sources/CalendarDate/Documentation.docc`](Sources/CalendarDate/Documentation.docc) にある。
 
 ## インストール
 
